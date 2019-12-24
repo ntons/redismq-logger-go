@@ -1,0 +1,1 @@
+# rmq-logger-go
