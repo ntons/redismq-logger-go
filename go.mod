@@ -1,3 +1,3 @@
-module github.com/ntons/tongo/logger/rmq
+module github.com/ntons/redismq-logger-go
 
 go 1.13

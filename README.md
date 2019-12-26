@@ -1,1 +1,1 @@
-# rmq-logger-go
+# redismq-logger-go

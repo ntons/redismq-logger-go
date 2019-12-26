@@ -1,3 +1,8 @@
 // 记录器
 
-package rmq
+package redismq
+
+type RedisMQLogger struct {
+}
+
+type Logger = RedisMQLogger
