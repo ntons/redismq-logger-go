@@ -15,7 +15,16 @@ type Logger struct {
 	mu  sync.RWMutex
 }
 
+func NewLogger(key string) *Logger {
+	return &Logger{Key: key}
+}
+
 func (l *Logger) Dial(options *redis.Options) (err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cli != nil {
+		return ErrDialed
+	}
 	cli := redis.NewClient(options)
 	if _, err = cli.Ping().Result(); err != nil {
 		return
