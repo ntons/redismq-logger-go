@@ -3,6 +3,7 @@ package redismq
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redis/redis"
@@ -23,6 +24,18 @@ func (x SleepForRecovery) Error() string {
 
 var DonotSleepForRecovery = SleepForRecovery{Duration: 0}
 
+type context struct {
+	c       *redis.Client
+	closedp *int32
+}
+
+func (ctx context) closed() bool {
+	return atomic.LoadInt32(ctx.closedp) != 0
+}
+func (ctx context) brpop(timeout time.Duration, key string) ([]string, error) {
+	return ctx.c.BRPop(timeout, key).Result()
+}
+
 type Work struct {
 	// redis list key
 	Key string
@@ -40,7 +53,7 @@ type Work struct {
 	// sleep duration for recovery, a qualter of one second by default
 	ErrorRecoveryDuration time.Duration
 	// redis client
-	atom *atom
+	//atom *atom
 }
 
 func (x *Work) getErrorRecoveryDuration() time.Duration {
@@ -70,8 +83,8 @@ func (w *Work) handleError(err error) (time.Duration, error) {
 	return 0, err
 }
 
-func (w *Work) serve() (err error) {
-	if err = w.doServe(); err != nil {
+func (w *Work) serve(ctx context) (err error) {
+	if err = w.doServe(ctx); err != nil {
 		log.Warnf("Work %q exit with error: %v", w.Key, err)
 	}
 	if w.OnExit != nil {
@@ -79,10 +92,11 @@ func (w *Work) serve() (err error) {
 	}
 	return
 }
-func (w *Work) doServe() (err error) {
-	for c := w.atom.get(); c != nil; c, err = w.atom.get(), nil {
+
+func (w *Work) doServe(ctx context) (err error) {
+	for ; !ctx.closed(); err = nil {
 		var data []string
-		if data, err = c.BRPop(time.Second, w.Key).Result(); err != nil {
+		if data, err = ctx.brpop(time.Second, w.Key); err != nil {
 			if err == redis.Nil {
 				continue // no data to read
 			}
@@ -105,7 +119,7 @@ func (w *Work) doServe() (err error) {
 				if n, err = w.Writer.Write(b[writen:]); err != nil {
 					writen += n
 					// retry 3 times at most while closing
-					if failure >= 3 && w.atom.closed() {
+					if failure >= 3 && ctx.closed() {
 						return // with write error
 					}
 					var sleep time.Duration

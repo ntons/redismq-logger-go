@@ -4,14 +4,15 @@ package redismq
 
 import (
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/go-redis/redis"
 )
 
 type Drainer struct {
-	// redis client
-	atom atom
+	c *redis.Client
+	// closed flag
+	closed int32
 	// works
 	mu sync.Mutex
 	m  map[string]*Work
@@ -20,41 +21,26 @@ type Drainer struct {
 
 // equivalence to new(Drainer) and Logger.Dial
 func NewDrainer(c *redis.Client) *Drainer {
-	return &Drainer{m: make(map[string]*Work)}
-}
-
-func (d *Drainer) Dial(options *redis.Options) (err error) {
-	c := redis.NewClient(options)
-	if _, err = c.Ping().Result(); err != nil {
-		return
+	return &Drainer{
+		c: c,
+		m: make(map[string]*Work),
 	}
-	d.dispose(d.atom.swap(c))
-	return
-}
-
-func (d *Drainer) Redirect(c *redis.Client) (err error) {
-	d.dispose(d.atom.swap(c))
-	return
 }
 
 func (d *Drainer) Drain(w *Work) (err error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.atom.closed() {
+	if atomic.LoadInt32(&d.closed) != 0 {
 		return ErrClosed
 	}
-	if d.m == nil {
-		d.m = make(map[string]*Work)
-	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if _, ok := d.m[w.Key]; ok {
 		return ErrRedupKey
 	}
-	w.atom = &d.atom
 	d.m[w.Key] = w
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		w.serve()
+		w.serve(context{d.c, &d.closed})
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		delete(d.m, w.Key)
@@ -63,21 +49,9 @@ func (d *Drainer) Drain(w *Work) (err error) {
 }
 
 func (d *Drainer) Close() (err error) {
-	c := d.atom.swap(nil)
-	d.wg.Wait()
-	if c != nil {
-		c.Close()
-	}
-	return
-}
-
-func (d *Drainer) dispose(c *redis.Client) {
-	if c == nil {
+	if !atomic.CompareAndSwapInt32(&d.closed, 0, 1) {
 		return
 	}
-	if d := c.Options().ReadTimeout; d > 0 {
-		time.AfterFunc(d+time.Second, func() { c.Close() })
-	} else {
-		time.AfterFunc(time.Minute, func() { c.Close() })
-	}
+	d.wg.Wait()
+	return
 }

@@ -3,48 +3,34 @@
 package redismq
 
 import (
-	"time"
+	"sync/atomic"
 
 	"github.com/go-redis/redis"
 )
 
 type Logger struct {
 	// redis client
-	Key string
-	// redis client
-	atom atom
+	c *redis.Client
+	//
+	key string
+	//
+	closed int32
 }
 
-// equivalence to new(Logger) and Logger.Dial
-func NewLogger(key string, c *redis.Client) (l *Logger) {
-	l = &Logger{Key: key}
-	l.atom.swap(c)
-	return
+func NewLogger(c *redis.Client, key string) (l *Logger) {
+	return &Logger{c: c, key: key}
 }
 
-// dial to redis server
-// multiple dialing will close previous dialed connections
-func (l *Logger) Dial(options *redis.Options) (err error) {
-	c := redis.NewClient(options)
-	if _, err = c.Ping().Result(); err != nil {
-		return
-	}
-	l.dispose(l.atom.swap(c))
-	return
-}
-
-// replace underlying redis connections, give previous client back
-func (l *Logger) Redirect(c *redis.Client) (err error) {
-	l.dispose(l.atom.swap(c))
-	return
+// get underlying redis client
+func (l *Logger) Client() *redis.Client {
+	return l.c
 }
 
 func (l *Logger) Write(b []byte) (n int, err error) {
-	c := l.atom.get()
-	if c == nil {
+	if atomic.LoadInt32(&l.closed) != 0 {
 		return 0, ErrClosed
 	}
-	if _, err = c.LPush(l.Key, b).Result(); err != nil {
+	if _, err = l.c.LPush(l.key, b).Result(); err != nil {
 		return
 	}
 	return len(b), nil
@@ -55,18 +41,8 @@ func (l *Logger) Sync() error {
 }
 
 func (l *Logger) Close() error {
-	l.dispose(l.atom.swap(nil))
+	if !atomic.CompareAndSwapInt32(&l.closed, 0, 1) {
+		return nil
+	}
 	return nil
-}
-
-// delay closing redis client after a reasonable duration
-func (l *Logger) dispose(c *redis.Client) {
-	if c == nil {
-		return
-	}
-	if d := c.Options().WriteTimeout; d > 0 {
-		time.AfterFunc(d+time.Second, func() { c.Close() })
-	} else {
-		time.AfterFunc(time.Minute, func() { c.Close() })
-	}
 }
