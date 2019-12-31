@@ -6,23 +6,23 @@ import (
 	"bytes"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/go-redis/redis"
 )
 
 func TestLoggerDrainer(t *testing.T) {
 	const Key = "TestLoggerDrainer"
-	opts := &redis.Options{Addr: "127.0.0.1:6379"}
+
+	c := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	if _, err := c.Ping().Result(); err != nil {
+		t.Fatal("redis dial: ", err)
+	}
 
 	// drainer
-	buf := bytes.NewBuffer(nil)
-	d := NewDrainer(nil)
-	if err := d.Dial(opts); err != nil {
-		t.Fatal("drainer dail: ", err)
-	}
+	d := NewDrainer(c)
 	defer d.Close()
 	drained := 0
+	buf := bytes.NewBuffer(nil)
 	if err := d.Drain(&Work{
 		Key:        Key,
 		Writer:     buf,
@@ -31,10 +31,7 @@ func TestLoggerDrainer(t *testing.T) {
 		t.Fatal("drainer drain: ", err)
 	}
 	// logger
-	l := NewLogger(Key, nil)
-	if err := l.Dial(opts); err != nil {
-		t.Fatal("logger dail: ", err)
-	}
+	l := NewLogger(c, Key)
 	defer l.Close()
 	data := [][]byte{
 		[]byte("Long live the People's Republic of China\n"),
@@ -46,7 +43,6 @@ func TestLoggerDrainer(t *testing.T) {
 	// check
 	for {
 		runtime.Gosched()
-		time.Sleep(100 * time.Millisecond)
 		if drained == 2 {
 			break
 		}
