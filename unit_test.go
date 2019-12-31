@@ -17,13 +17,13 @@ func TestLoggerDrainer(t *testing.T) {
 
 	// drainer
 	buf := bytes.NewBuffer(nil)
-	d := NewDrainer()
+	d := NewDrainer(nil)
 	if err := d.Dial(opts); err != nil {
 		t.Fatal("drainer dail: ", err)
 	}
 	defer d.Close()
 	drained := 0
-	if err := d.Drain(&DrainWork{
+	if err := d.Drain(&Work{
 		Key:        Key,
 		Writer:     buf,
 		AfterWrite: func([]byte) { drained++ },
@@ -31,7 +31,7 @@ func TestLoggerDrainer(t *testing.T) {
 		t.Fatal("drainer drain: ", err)
 	}
 	// logger
-	l := NewLogger(Key)
+	l := NewLogger(Key, nil)
 	if err := l.Dial(opts); err != nil {
 		t.Fatal("logger dail: ", err)
 	}
